@@ -2,172 +2,167 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
-#define RESET   "\033[0m"
-#define BOLDWHITE   "\033[1m\033[37m"
-#define BLACK   "\033[30m"      /* Black */
-#define RED     "\033[31m"      /* Red */
-#define GREEN   "\033[32m"      /* Green */
-#define YELLOW  "\033[33m"      /* Yellow */
-#define BLUE    "\033[34m"      /* Blue */
-#define MAGENTA "\033[35m"      /* Magenta */
-#define CYAN    "\033[36m"      /* Cyan */
-#define WHITE   "\033[37m" 
+#include "defines.h"
+#include "functions.c"
 
-int last_command=0;
-// https://en.wikipedia.org/wiki/JPEG
-void setColor(int c){
-	last_command=c;
-	switch(c){
-		case 192: // SOF0 - Start Of Frame (Baseline DCT)
-			printf(MAGENTA);
-		case 194: // SOF2 - Start Of Frame (Progressive DCT)
-			printf(MAGENTA);
-		case 196:  // DHT - Define Huffman Tables
-			printf(CYAN);
-			break;
-		case 208:
-		case 209:
-		case 210:
-		case 211:
-		case 212:
-		case 213:
-		case 214:
-		case 215:
-			printf(GREEN);
-		case 216: // SOI - Start of image
-			printf(YELLOW);
-			break;
-		case 217: // EOI - End Of Image
-			printf(MAGENTA);
-		case 218: // SOS - Start of Scan
-			printf(WHITE);
-			break;
-		case 219: // DQT - Define Quantization Table(s)
-			printf(YELLOW);
-			break;
-		case 221: // DRI - Define Restart Interval
-			printf(CYAN);
-			break;
-		case 224: // APPn - Applicationspecific
-		case 225:
-		case 226:
-		case 227:
-		case 228:
-		case 229:
-		case 230:
-		case 231:
-		case 232:
-		case 233:
-		case 234:
-		case 235:
-		case 236:
-		case 237:
-		case 238:
-		case 239:
-			printf(RED);
-			break;
-		case 254:
-			printf(BLUE);
-			break;
-		default:
-			//last_command=?
-			break;
-	}
-}
+unsigned char *buffer;
 
-void printoz(unsigned char cur_char, unsigned char next_char,bool hex){
-	setColor(last_command);
-	if(hex){
-		int cur_char_i = cur_char;
-		int next_char_i = next_char;
-		if(cur_char_i == 255 && next_char_i != 0){
-			setColor(next_char_i);
-			last_command= next_char_i;
-		}
-		printf("%02X ",cur_char);
-	}else{
-		if(cur_char != 10 && cur_char != 11 && cur_char != 12 && cur_char != 13){
-			printf("%c ",cur_char);
+struct command {
+    int code; 
+    int length;
+    int index;  // TODO fix to long
+}commands[1000];
+
+
+void print_buffer(int start,int count,bool hex){
+	int index;
+	for(index=start; index<start+count;index++){
+		unsigned char c = (unsigned char)buffer[index];
+		if(hex){
+			printf("%02X ",c);
 		}else{
-			printf("\\");
+			printf("%c ",c);
 		}
 	}
 }
 
 int getFileLength(FILE *file){
 	fseek(file, 0, SEEK_END);
-	int fileLen=ftell(file);
+	int file_len=ftell(file);
 	fseek(file, 0, SEEK_SET);
-	return fileLen;
+	return file_len;
+}
+
+int getDesiredCharsPerLine(int argc, char * argv[]){
+	int chars_per_line=12;
+	if(argc>2){
+		int desired_chars_per_line = atoi(argv[2]);
+		if (desired_chars_per_line>0 && desired_chars_per_line<1000){
+			return desired_chars_per_line;
+		}
+	}
+	return chars_per_line;
+}
+
+void check_integrity(int command_counter,long file_len){
+	int offset=0;
+	int absolute=0;
+	int commands_index;
+	struct command current_command;
+	struct command next_command;
+	bool last_command_is_current;
+
+	for(commands_index=0; commands_index<command_counter; commands_index++){
+		current_command=commands[commands_index];
+
+		if(commands_index<(command_counter-1)){
+			last_command_is_current=false;
+			next_command=commands[(commands_index+1)];
+		}else{
+			last_command_is_current=true;
+		}
+		
+		if(current_command.code==JPEG_END_OF_IMAGE){
+			int end_offset= (current_command.index)+2;
+			if((current_command.index+2)!=file_len){
+				printf("Data found after the 'End of Image' Command! \nEnd of Image at: %i , actual file length: %lu\n",end_offset,file_len);
+				printf("HEX: ");print_buffer(end_offset,file_len-end_offset,true);
+				printf("\nDEC: ");print_buffer(end_offset,file_len-end_offset,false);
+			}
+		}else if(current_command.code==JPEG_START_OF_IMAGE) {
+			if(current_command.index!=0){
+				printf("Data found before the 'Start of Image' Command!\n");
+				printf("HEX: ");print_buffer(0,current_command.index,true);
+				printf("\nDEC: ");print_buffer(0,current_command.index,false);
+			}
+			absolute=absolute+2;
+		} else if(current_command.code==JPEG_DEF_RESTART_INTV) {
+			if(next_command.index>(current_command.index+4)){
+				printf("Unexpected data found after 'Define restart interval' Command!");
+				// TODO print till next command index
+			}
+			absolute=absolute+2;
+		} else if(current_command.code==JPEG_START_OF_SCAN) {
+			if(next_command.index<commands[commands_index].length){
+				printf("Unexpected data found after 'Start of Scan' Command!");
+				// TODO print till next command index
+			}
+			absolute=absolute+next_command.index;
+		}else{
+			offset =  commands[commands_index].index + commands[commands_index].length;
+			if(offset<next_command.index){
+				printf("Additional data found after command(FF %i)!\n",current_command.code);
+				printf("%i - %i",offset,next_command.index);
+			}
+			if(offset>next_command.index){
+				printf("Missing data found after command(FF %i)!\n",current_command.code);
+				printf("%i - %i",offset,next_command.index);
+			}
+		}
+	}
+	// CHECK NO STARt, NO END ETC
+	// PRINT COMMENTS
+	printf("\nDone\n");
 }
 
 int main (int argc , char * argv [] ){
 
-        FILE *file;
-        unsigned char *buffer;
-        unsigned long fileLen;
-        int chars_per_line=12;
+	int chars_per_line= getDesiredCharsPerLine(argc, argv);
+	FILE *file;
+	unsigned long file_len;
+	file = fopen(argv[1], "rb");
+	if (!file)
+	{
+		fprintf(stderr, "Unable to open file %s\n", argv[1]);
+		return 1;
+	}
+	file_len=getFileLength(file);
+	buffer=(char *)malloc(file_len);
+	if (!buffer)
+	{
+		fprintf(stderr, "Memory error!");
+		fclose(file);
+		return 1;
+	}
+	fread(buffer,file_len,sizeof(unsigned char),file);
+	fclose(file);
 
-        file = fopen(argv[1], "rb");
-        if (!file)
-        {
-                fprintf(stderr, "Unable to open file %s\n", argv[1]);
-                return 1;
-        }
 
-        if(argc>2){
-        	int desired_chars_per_line = atoi(argv[2]);
-        	if (desired_chars_per_line>0 && desired_chars_per_line<1000){
-        		chars_per_line=desired_chars_per_line;
-        	}
-        }
+	int buffer_index=0;
+	int current_line=0;
+	int line_counter;
+	int command_counter=0;
 
-        fileLen=getFileLength(file);
+	int char_cur_i;
+	int char_two_i;
+	int char_three_i;
+	int char_four_i;
 
-        buffer=(char *)malloc(fileLen);
-        if (!buffer)
-        {
-			fprintf(stderr, "Memory error!");
-			fclose(file);
-			return 1;
-        }
 
-       fread(buffer,fileLen,sizeof(unsigned char),file);
-       fclose(file);
+	while (buffer_index < file_len){ // READING OVER EDGE OF MEMORY ... TODO !
+		unsigned char char_cur   = (unsigned char)buffer[buffer_index]; 
+		unsigned char char_two   = (unsigned char)buffer[(buffer_index+1)];
+		unsigned char char_three = (unsigned char)buffer[(buffer_index+2)]; 
+		unsigned char char_four  = (unsigned char)buffer[(buffer_index+3)];
+		char_cur_i = char_cur;
+		char_two_i = char_two;
+		char_three_i = char_three;
+		char_four_i = char_four;
+		if(char_cur_i == 255 && char_two_i != 0){
+			int command_length = char_three_i*256 + char_four_i;
+			struct command c = {char_two_i, command_length+2,buffer_index};
+			commands[command_counter++]=c;
+		}
+		buffer_index++;
+	}
 
-		int i=0;
-		int line_counter=0;
-		int line=0;
-		int empty_chars=0;
-		unsigned char cur_char;
-		unsigned char next_char;
-		int cur_char_i;
-		int next_char_i;
+	int commands_index;
+	for(commands_index=0; commands_index<command_counter; commands_index++){
+		//printf("@%i = %i   ",commands[commands_index].index,commands[commands_index].length);
+	}
 
-		while (i < fileLen){
-			printf(BOLDWHITE"%04i: "RESET,line);
-			
-
-			for(line_counter=0;line_counter<chars_per_line;line_counter++){
-				if(fileLen-i>0){
-					printoz((unsigned char)buffer[i],(unsigned char)buffer[(i+1)],true);
-					i++;
-				}else{
-					printf("   ");
-					empty_chars++;
-				}
-			}
-			i=i-chars_per_line+empty_chars;
-			printf(" |  ");
-			for(line_counter=0;line_counter<chars_per_line;line_counter++){
-				if(fileLen-i>0){
-					printoz((unsigned char)buffer[i],(unsigned char)buffer[(i+1)],false);
-					i++;
-				}
-			}
-			line++;
-			printf( "\n" );	
-       }
-	   printf( RESET"\n" );
-       return 0;
+	check_integrity(command_counter,file_len);
+	
+	printf( RESET"\n" );
+	return 0;
 }
