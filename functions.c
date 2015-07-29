@@ -34,6 +34,8 @@ void set_command_color(int c){
 	}
 }
 
+
+
 void print_command(int c){
 	switch(c){
 		case 192: 

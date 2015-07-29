@@ -13,6 +13,8 @@ struct command {
     long index;
 }commands[1000];
 
+int output_mode;
+
 
 void print_buffer(int start,int count,bool hex){
 	int index;
@@ -26,15 +28,35 @@ void print_buffer(int start,int count,bool hex){
 	}
 }
 
-int getFileLength(FILE *file){
+
+void print_buffer_output_mode(int start, int count){
+	switch(output_mode){
+		case 3: 
+			printf("DEC: ");print_buffer(start,count,false);printf("\n");
+			printf("HEX: ");print_buffer(start,count,true);;printf("\n");  break;
+		case 2:
+			printf("HEX: ");print_buffer(start,count,true);;printf("\n");  break;
+		case 1:
+			printf("DEC: ");print_buffer(start,count,false);;printf("\n"); break;
+	}
+}
+
+int get_file_length(FILE *file){
 	fseek(file, 0, SEEK_END);
 	int file_len=ftell(file);
 	fseek(file, 0, SEEK_SET);
 	return file_len;
 }
 
-int getDesiredCharsPerLine(int argc, char * argv[]){
-	int chars_per_line=12;
+void load_argv_param(int argc, char * argv[]){
+	int i;
+	for(i=0;i<argc;i++){
+		printf("%s\n",argv[i]);
+	}
+}
+
+int get_desired_chars_per_line(int argc, char * argv[]){
+	int chars_per_line=default_chars_per_line;
 	if(argc>2){
 		int desired_chars_per_line = atoi(argv[2]);
 		if (desired_chars_per_line>0 && desired_chars_per_line<1000){
@@ -44,20 +66,30 @@ int getDesiredCharsPerLine(int argc, char * argv[]){
 	return chars_per_line;
 }
 
+// 0 - None | 1 - ASCII | 2 - HEX | 3 - ALL
+void getOutputMode(int argc, char * argv[]){
+	output_mode = 1;
+	if(argc>3){
+		int desired_output_mode = atoi(argv[3]);
+		if (desired_output_mode>=0 && desired_output_mode<=3){
+			output_mode=desired_output_mode;
+		}
+	}
+}
+
+
 void check_additional_data_start_end(struct command current_command,long file_len,int command_counter){
 	int current_command_eff_index= (current_command.index)+2;
 	if(current_command.code==JPEG_END_OF_IMAGE){
 		if((current_command.index+2)!=file_len){
-			printf("Data found after the 'End of Image' Command! \nEnd of Image at: %i , actual file length: %lu\n",current_command_eff_index,file_len);
-			//printf("HEX: ");print_buffer(current_command_eff_index,file_len-current_command_eff_index,true);
-			printf("\nDEC: ");print_buffer(current_command_eff_index,file_len-current_command_eff_index,false);
+			printf(BOLDYELLOW"Unexpected data found after the 'End of Image' Command! \nEnd of Image at: %i , actual file length: %lu\n"RESET,current_command_eff_index,file_len);
+			print_buffer_output_mode(current_command_eff_index,file_len-current_command_eff_index);
 			printf("\n");
 		}
 	}else if(current_command.code==JPEG_START_OF_IMAGE) {
 		if(current_command.index!=0){
-			printf("Data found before the 'Start of Image' Command!\n");
-			//printf("HEX: ");print_buffer(0,current_command.index,true);
-			printf("\nDEC: ");print_buffer(0,current_command.index,false);
+			printf(BOLDYELLOW"Unexpected data found before the 'Start of Image' Command!\n"RESET);
+			print_buffer_output_mode(0,current_command.index);
 			printf("\n");
 		}
 	} 
@@ -71,20 +103,18 @@ void check_if_start_end_existing(int command_counter){
 
 	for(commands_index=0; commands_index<command_counter; commands_index++){
 		current_command=commands[commands_index];
-		if(current_command.code==JPEG_END_OF_IMAGE){
-			file_has_end=true;
-		}
-		if(current_command.code==JPEG_START_OF_IMAGE) {
-			file_has_start=true;
-		}
+		file_has_end	=((current_command.code==JPEG_END_OF_IMAGE) 	|| file_has_end);
+		file_has_start	=((current_command.code==JPEG_START_OF_IMAGE) 	|| file_has_start);
 	}
+
 	if(!file_has_start){
-		printf("File containts no start command!\n");
+		printf(BOLDRED"File contains no start command!\n"RESET);
 	}
 	if(!file_has_end){
-		printf("File containts no end command!\n");
+		printf(BOLDRED"File contains no end command!\n"RESET);
 	}
 }
+
 
 void check_integrity(int command_counter,long file_len){
 	long offset=0;
@@ -105,48 +135,46 @@ void check_integrity(int command_counter,long file_len){
 		}
 		
 		int current_command_eff_index= (current_command.index)+2;
-
 		check_additional_data_start_end(current_command,file_len,command_counter);
 
 		absolute=absolute+current_command.length;
 
 		if(current_command.code==JPEG_DEF_RESTART_INTV) {
 			if(next_command.index>(current_command.index+4)){
-				printf("Unexpected data found after 'Define restart interval' Command!\n");
-				// TODO print till next command index
+				printf(BOLDYELLOW"Unexpected data found after 'Define restart interval' Command!\n"RESET);
+				print_buffer_output_mode(current_command_eff_index,next_command.index-current_command_eff_index);
 			}
 			absolute=absolute+2;
 		} else if(current_command.code==JPEG_START_OF_SCAN) {
 			if(next_command.index<commands[commands_index].length){
-				printf("Missing data after 'Start of Scan' Command!\n");
+				printf(BOLDBLUE"Missing data after 'Start of Scan' Command!\n"RESET);
 			}
 			// This marker specifies which slice of data it will contain, and is immediately followed by entropy-coded data.
-			//int entropy_coded_data_length = next_command.index - current_command.index - current_command.length;
 			absolute=absolute - current_command.length;
 			absolute=absolute + (next_command.index - current_command.index);
 		} else if(current_command.code>=224 && current_command.code <= 239){
-			printf("Application specific data found:\n");
-			printf("DEC: ");print_buffer(current_command_eff_index,current_command.length,false);
+			printf(BOLDWHITE"Application specific data found:\n"RESET);
+			print_buffer_output_mode(current_command_eff_index,current_command.length);
 			printf("\n");
 			if(next_command.index!=(commands[commands_index].length)+2){
-				printf("Invalid length given with Application specific data marker!\n");
+				printf(BOLDRED"Invalid length given with Application specific data marker!\n"RESET);
 				printf("\n%li-%i\n",next_command.index,commands[commands_index].length);
 			}
 		}else if(current_command.code!= JPEG_START_OF_IMAGE && current_command.code != JPEG_END_OF_IMAGE){
 			offset =  commands[commands_index].index + commands[commands_index].length;
 			if(offset<next_command.index){
-				printf("Additional data found after command(FF %i)!\n",current_command.code);
+				printf(BOLDYELLOW"Additional data found after command(FF %i)!\nRESET",current_command.code);
 				printf("%li - %li",offset,next_command.index);
 			}
 			if(offset>next_command.index){
-				printf("Missing data found after command(FF %i)!\n",current_command.code);
+				printf(BOLDBLUE"Missing data found after command(FF %i)!\nRESET",current_command.code);
 				printf("%li - %li",offset,next_command.index);
 			}
 		}
 
 		if(current_command.code==JPEG_COMMENT){
-			printf("Comment found:\n");
-			printf("DEC: ");print_buffer(current_command_eff_index,current_command.length,false);
+			printf(BOLDWHITE"Comment found:\n"RESET);
+			print_buffer_output_mode(current_command_eff_index,current_command.length);
 			printf("\n");
 		}
 	}
@@ -155,14 +183,17 @@ void check_integrity(int command_counter,long file_len){
 	check_if_start_end_existing(command_counter);
 	
 	if(absolute!=file_len) {
-		printf("Calculated file length: %li, file length on filesystem: %li are mismatching!",absolute,file_len);
+		printf(BOLDRED"Calculated file length: %li, file length on filesystem: %li are mismatching!"RESET,absolute,file_len);
 	}
 	printf("\nDone\n");
 }
 
 int main (int argc , char * argv [] ){
 
-	int chars_per_line= getDesiredCharsPerLine(argc, argv);
+	int chars_per_line= get_desired_chars_per_line(argc, argv);
+	getOutputMode(argc,argv);
+	load_argv_param(argc,argv);
+
 	FILE *file;
 	unsigned long file_len;
 	file = fopen(argv[1], "rb");
@@ -171,7 +202,7 @@ int main (int argc , char * argv [] ){
 		fprintf(stderr, "Unable to open file %s\n", argv[1]);
 		return 1;
 	}
-	file_len=getFileLength(file);
+	file_len=get_file_length(file);
 	buffer=(char *)malloc(file_len);
 	if (!buffer)
 	{
@@ -194,15 +225,31 @@ int main (int argc , char * argv [] ){
 	int char_four_i;
 
 
-	while (buffer_index < file_len){ // READING OVER EDGE OF MEMORY ... TODO !
+	while (buffer_index < file_len){
+
+		char_cur_i=-1;
+		char_two_i=-1;
+		char_three_i=-1;
+		char_four_i=-1;
+
 		unsigned char char_cur   = (unsigned char)buffer[buffer_index]; 
-		unsigned char char_two   = (unsigned char)buffer[(buffer_index+1)];
-		unsigned char char_three = (unsigned char)buffer[(buffer_index+2)]; 
-		unsigned char char_four  = (unsigned char)buffer[(buffer_index+3)];
 		char_cur_i = char_cur;
-		char_two_i = char_two;
-		char_three_i = char_three;
-		char_four_i = char_four;
+
+		if((buffer_index+1)!=file_len){
+			unsigned char char_two   = (unsigned char)buffer[(buffer_index+1)];
+			char_two_i = char_two;
+		}
+		if((buffer_index+2)!=file_len){
+			unsigned char char_three = (unsigned char)buffer[(buffer_index+2)]; 
+			char_three_i = char_three;
+		}
+		if((buffer_index+3)!=file_len){
+			unsigned char char_four  = (unsigned char)buffer[(buffer_index+3)];
+			char_four_i = char_four;
+		}
+
+
+
 		if(char_cur_i == 255 && char_two_i != 0){
 			int command_length;
 			if(char_two_i==JPEG_START_OF_IMAGE || char_two_i==JPEG_END_OF_IMAGE){ // START TAG DOESNT HAVE SIZE MARKERS
@@ -214,11 +261,6 @@ int main (int argc , char * argv [] ){
 			commands[command_counter++]=c;
 		}
 		buffer_index++;
-	}
-
-	int commands_index;
-	for(commands_index=0; commands_index<command_counter; commands_index++){
-		//printf("@%i = %i   ",commands[commands_index].index,commands[commands_index].length);
 	}
 
 	check_integrity(command_counter,file_len);
