@@ -185,7 +185,7 @@ void check_integrity(int command_counter,long file_len){
 
 int main (int argc , char * argv [] ){
 
-	if(argc<1){
+	if(argc<=1){
 		print_programm_usage();
 		return 0;
 	}
