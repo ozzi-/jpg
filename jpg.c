@@ -14,12 +14,17 @@ struct command {
 }commands[1000];
 
 int output_mode;
-
+int chars_per_line=50;
 
 void print_buffer(int start,int count,bool hex){
 	int index;
+	int rest;
 	for(index=start; index<start+count;index++){
 		unsigned char c = (unsigned char)buffer[index];
+		rest=index%chars_per_line;
+		if(rest==0){
+			printf("\n");
+		}
 		if(hex){
 			printf("%02X ",c);
 		}else{
@@ -32,45 +37,35 @@ void print_buffer(int start,int count,bool hex){
 void print_buffer_output_mode(int start, int count){
 	switch(output_mode){
 		case 3: 
-			printf("DEC: ");print_buffer(start,count,false);printf("\n");
-			printf("HEX: ");print_buffer(start,count,true);;printf("\n");  break;
+			printf(BOLDWHITE"DEC: "RESET);print_buffer(start,count,false);printf("\n");
+			printf(BOLDWHITE"HEX: "RESET);print_buffer(start,count,true);;printf("\n");  break;
 		case 2:
-			printf("HEX: ");print_buffer(start,count,true);;printf("\n");  break;
+			printf(BOLDWHITE"HEX: "RESET);print_buffer(start,count,true);;printf("\n");  break;
 		case 1:
-			printf("DEC: ");print_buffer(start,count,false);;printf("\n"); break;
+			printf(BOLDWHITE"DEC: "RESET);print_buffer(start,count,false);;printf("\n"); break;
 	}
 }
 
-int get_file_length(FILE *file){
+long get_file_length(FILE *file){
 	fseek(file, 0, SEEK_END);
-	int file_len=ftell(file);
+	long file_len=ftell(file);
 	fseek(file, 0, SEEK_SET);
 	return file_len;
 }
 
-void load_argv_param(int argc, char * argv[]){
-	int i;
-	for(i=0;i<argc;i++){
-		printf("%s\n",argv[i]);
-	}
-}
-
 int get_desired_chars_per_line(int argc, char * argv[]){
-	int chars_per_line=default_chars_per_line;
 	if(argc>2){
-		int desired_chars_per_line = atoi(argv[2]);
+		int desired_chars_per_line = atoi(argv[3]);
 		if (desired_chars_per_line>0 && desired_chars_per_line<1000){
-			return desired_chars_per_line;
+			chars_per_line = desired_chars_per_line;
 		}
 	}
-	return chars_per_line;
 }
 
-// 0 - None | 1 - ASCII | 2 - HEX | 3 - ALL
-void getOutputMode(int argc, char * argv[]){
+void get_output_mode(int argc, char * argv[]){
 	output_mode = 1;
 	if(argc>3){
-		int desired_output_mode = atoi(argv[3]);
+		int desired_output_mode = atoi(argv[2]);
 		if (desired_output_mode>=0 && desired_output_mode<=3){
 			output_mode=desired_output_mode;
 		}
@@ -190,25 +185,31 @@ void check_integrity(int command_counter,long file_len){
 
 int main (int argc , char * argv [] ){
 
-	int chars_per_line= get_desired_chars_per_line(argc, argv);
-	getOutputMode(argc,argv);
-	load_argv_param(argc,argv);
+	if(argc<1){
+		print_programm_usage();
+		return 0;
+	}
+
+	get_desired_chars_per_line(argc, argv);
+	get_output_mode(argc,argv);
+
 
 	FILE *file;
-	unsigned long file_len;
+	long file_len;
 	file = fopen(argv[1], "rb");
 	if (!file)
 	{
 		fprintf(stderr, "Unable to open file %s\n", argv[1]);
 		return 1;
 	}
+
 	file_len=get_file_length(file);
 	buffer=(char *)malloc(file_len);
 	if (!buffer)
 	{
 		fprintf(stderr, "Memory error!");
 		fclose(file);
-		return 1;
+		return 2;
 	}
 	fread(buffer,file_len,sizeof(unsigned char),file);
 	fclose(file);
@@ -223,41 +224,34 @@ int main (int argc , char * argv [] ){
 	int char_two_i;
 	int char_three_i;
 	int char_four_i;
-
+	
+	unsigned char chars[3];
+	int  chars_i[3];
+	int i;
 
 	while (buffer_index < file_len){
 
-		char_cur_i=-1;
-		char_two_i=-1;
-		char_three_i=-1;
-		char_four_i=-1;
-
-		unsigned char char_cur   = (unsigned char)buffer[buffer_index]; 
-		char_cur_i = char_cur;
-
-		if((buffer_index+1)!=file_len){
-			unsigned char char_two   = (unsigned char)buffer[(buffer_index+1)];
-			char_two_i = char_two;
-		}
-		if((buffer_index+2)!=file_len){
-			unsigned char char_three = (unsigned char)buffer[(buffer_index+2)]; 
-			char_three_i = char_three;
-		}
-		if((buffer_index+3)!=file_len){
-			unsigned char char_four  = (unsigned char)buffer[(buffer_index+3)];
-			char_four_i = char_four;
+		for(i=0;i<3;i++){
+			chars_i[i]=-1;
 		}
 
+		for(i=0;i<=3;i++){
+			if((buffer_index+i)!=file_len){
+				chars[i] = (unsigned char)buffer[(buffer_index+i)];
+				chars_i[i] = chars[i];
+			}
+		}
+	
 
-
-		if(char_cur_i == 255 && char_two_i != 0){
+		if(chars_i[0] == 255 && chars_i[1]!= 0){
 			int command_length;
-			if(char_two_i==JPEG_START_OF_IMAGE || char_two_i==JPEG_END_OF_IMAGE){ // START TAG DOESNT HAVE SIZE MARKERS
+			// Start command has no lenght markers
+			if(chars_i[1]==JPEG_START_OF_IMAGE || chars_i[1]==JPEG_END_OF_IMAGE){ 
 				command_length = 2;
 			}else{
-				command_length = char_three_i*256 + char_four_i+2;	
+				command_length = chars_i[2]*256 + chars_i[3]+2;	
 			}
-			struct command c = {char_two_i, command_length,buffer_index};
+			struct command c = {chars_i[1], command_length,buffer_index};
 			commands[command_counter++]=c;
 		}
 		buffer_index++;

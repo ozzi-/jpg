@@ -1,3 +1,9 @@
+void print_programm_usage(){
+	printf("jpg filename.jpg {om} {le}\n");
+	printf("\n{om}= Output Mode. 0=No output, 1=ASCII, 2=HEX, 3=ASCII & HEX\n");
+	printf(" {le}= Number of chars per line");
+}
+
 void set_command_color(int c){
 	switch(c){
 		case 192: 
