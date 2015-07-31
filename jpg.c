@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "defines.h"
-#include "functions.c"
+#include "printfunctions.c"
 
 unsigned char *buffer;
 
@@ -16,35 +16,6 @@ struct command {
 int output_mode;
 int chars_per_line=50;
 
-void print_buffer(int start,int count,bool hex){
-	int index;
-	int rest;
-	for(index=start; index<start+count;index++){
-		unsigned char c = (unsigned char)buffer[index];
-		rest=index%chars_per_line;
-		if(rest==0){
-			printf("\n");
-		}
-		if(hex){
-			printf("%02X ",c);
-		}else{
-			printf("%c ",c);
-		}
-	}
-}
-
-
-void print_buffer_output_mode(int start, int count){
-	switch(output_mode){
-		case 3: 
-			printf(BOLDWHITE"DEC: "RESET);print_buffer(start,count,false);printf("\n");
-			printf(BOLDWHITE"HEX: "RESET);print_buffer(start,count,true);;printf("\n");  break;
-		case 2:
-			printf(BOLDWHITE"HEX: "RESET);print_buffer(start,count,true);;printf("\n");  break;
-		case 1:
-			printf(BOLDWHITE"DEC: "RESET);print_buffer(start,count,false);;printf("\n"); break;
-	}
-}
 
 long get_file_length(FILE *file){
 	fseek(file, 0, SEEK_END);
@@ -158,12 +129,12 @@ void check_integrity(int command_counter,long file_len){
 		}else if(current_command.code!= JPEG_START_OF_IMAGE && current_command.code != JPEG_END_OF_IMAGE){
 			offset =  commands[commands_index].index + commands[commands_index].length;
 			if(offset<next_command.index){
-				printf(BOLDYELLOW"Additional data found after command(FF %i)!\nRESET",current_command.code);
-				printf("%li - %li",offset,next_command.index);
+				printf(BOLDYELLOW"Additional data found after command(FF %i)!\n"RESET,current_command.code);
+				print_buffer_output_mode(offset,(next_command.index-offset));
 			}
 			if(offset>next_command.index){
 				printf(BOLDBLUE"Missing data found after command(FF %i)!\nRESET",current_command.code);
-				printf("%li - %li",offset,next_command.index);
+				print_buffer_output_mode(offset,(next_command.index-offset));
 			}
 		}
 
@@ -173,7 +144,6 @@ void check_integrity(int command_counter,long file_len){
 			printf("\n");
 		}
 	}
-	// TODO check for absolute
 
 	check_if_start_end_existing(command_counter);
 	
@@ -219,12 +189,6 @@ int main (int argc , char * argv [] ){
 	int current_line=0;
 	int line_counter;
 	int command_counter=0;
-
-	int char_cur_i;
-	int char_two_i;
-	int char_three_i;
-	int char_four_i;
-	
 	unsigned char chars[3];
 	int  chars_i[3];
 	int i;
@@ -241,7 +205,6 @@ int main (int argc , char * argv [] ){
 				chars_i[i] = chars[i];
 			}
 		}
-	
 
 		if(chars_i[0] == 255 && chars_i[1]!= 0){
 			int command_length;
